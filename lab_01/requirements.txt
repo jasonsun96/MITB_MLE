@@ -1,0 +1,9 @@
+# Core ML / data libraries — pinned to specific versions for reproducibility.
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.1
+matplotlib==3.9.2
+
+# Jupyter Lab so we can run notebooks in the container.
+jupyterlab==4.2.5
+notebook==7.2.2

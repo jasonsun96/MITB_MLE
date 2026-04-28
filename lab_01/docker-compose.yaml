@@ -1,0 +1,21 @@
+# docker-compose.yaml
+# Tells Docker how to build and run our container with one command.
+
+services:
+  mle-lab:
+    # Build the image using the Dockerfile in this same folder.
+    build: .
+    # Friendly name shown in Docker Desktop.
+    container_name: mle-lab-1
+    # Map port 8888 inside the container to 8888 on your laptop,
+    # so you can open Jupyter at http://localhost:8888
+    ports:
+      - "8888:8888"
+    # Mount the current folder into /app inside the container.
+    # This means any change you make to your local files shows up
+    # instantly in the container (no rebuild needed for code edits).
+    volumes:
+      - .:/app
+    # Keep the container alive even if Jupyter crashes during dev.
+    stdin_open: true
+    tty: true
