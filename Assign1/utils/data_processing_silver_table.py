@@ -56,21 +56,18 @@ FINANCIALS_NUMERIC_CAPS = {
 }
 
 
-# All 9 distinct loan types found in Type_of_Loan during EDA
-LOAN_TYPES = [
-    "Payday Loan", "Credit-Builder Loan", "Not Specified",
-    "Home Equity Loan", "Student Loan", "Mortgage Loan",
-    "Personal Loan", "Debt Consolidation Loan", "Auto Loan",
-]
-
-
 # =============================================================================
 # Helpers
 # =============================================================================
 
 def _read_bronze(source_name, snapshot_date_str, bronze_dir, spark):
+    """Returns the loaded DataFrame, or None if the bronze partition does not
+    exist (bronze skipped writing because the source had no data for this date)."""
     partition_name = f"bronze_{source_name}_" + snapshot_date_str.replace("-", "_") + ".csv"
     filepath = os.path.join(bronze_dir, partition_name)
+    if not os.path.exists(filepath):
+        print(f"[silver {source_name}] no bronze file for {snapshot_date_str} — skipping")
+        return None
     df = spark.read.csv(filepath, header=True, inferSchema=True)
     print(f"[silver {source_name}] loaded from {filepath} row count: {df.count()}")
     return df
@@ -90,6 +87,8 @@ def _write_silver(df, source_name, snapshot_date_str, silver_dir):
 
 def process_silver_loan_daily(snapshot_date_str, bronze_dir, silver_dir, spark):
     df = _read_bronze("loan_daily", snapshot_date_str, bronze_dir, spark)
+    if df is None or df.count() == 0:
+        return None
 
     # Enforce schema
     column_type_map = {
@@ -142,6 +141,8 @@ def process_silver_loan_daily(snapshot_date_str, bronze_dir, silver_dir, spark):
 
 def process_silver_attributes(snapshot_date_str, bronze_dir, silver_dir, spark):
     df = _read_bronze("attributes", snapshot_date_str, bronze_dir, spark)
+    if df is None or df.count() == 0:
+        return None
 
     # Drop PII (not allowed in feature store; also low signal)
     df = df.drop("Name", "SSN")
@@ -179,6 +180,8 @@ def process_silver_attributes(snapshot_date_str, bronze_dir, silver_dir, spark):
 
 def process_silver_financials(snapshot_date_str, bronze_dir, silver_dir, spark):
     df = _read_bronze("financials", snapshot_date_str, bronze_dir, spark)
+    if df is None or df.count() == 0:
+        return None
 
     # Type enforcement on stable columns
     df = df.withColumn("Customer_ID", col("Customer_ID").cast(StringType()))
@@ -205,29 +208,16 @@ def process_silver_financials(snapshot_date_str, bronze_dir, silver_dir, spark):
     )
     df = df.drop("Credit_History_Age")
 
-    # Parse Type_of_Loan: split by ", ", strip leading "and " from last item,
-    # then explode to 9 booleans + 1 count
+    # Parse Type_of_Loan into a cleaned ARRAY of strings.
+    # This is the canonical silver representation (single source of truth).
+    # Boolean expansion into has_<type> features and n_loan_types is feature
+    # engineering and happens in Gold (process_features_gold_table).
     df = df.withColumn("loan_types_array", F.split(col("Type_of_Loan"), ", "))
     df = df.withColumn(
         "loan_types_array",
         F.expr("transform(loan_types_array, x -> regexp_replace(x, '^and ', ''))")
     )
-
-    for lt in LOAN_TYPES:
-        col_name = "has_" + lt.lower().replace(" ", "_").replace("-", "_")
-        df = df.withColumn(
-            col_name,
-            F.coalesce(
-                F.array_contains(col("loan_types_array"), lt),
-                F.lit(False)
-            ).cast(IntegerType())
-        )
-
-    df = df.withColumn(
-        "n_loan_types",
-        F.coalesce(F.size(col("loan_types_array")), F.lit(0))
-    )
-    df = df.drop("Type_of_Loan", "loan_types_array")
+    df = df.drop("Type_of_Loan")
 
     _write_silver(df, "financials", snapshot_date_str, silver_dir)
     return df
@@ -240,6 +230,8 @@ def process_silver_financials(snapshot_date_str, bronze_dir, silver_dir, spark):
 
 def process_silver_clickstream(snapshot_date_str, bronze_dir, silver_dir, spark):
     df = _read_bronze("clickstream", snapshot_date_str, bronze_dir, spark)
+    if df is None or df.count() == 0:
+        return None
 
     df = df.withColumn("Customer_ID", col("Customer_ID").cast(StringType()))
     df = df.withColumn("snapshot_date", col("snapshot_date").cast(DateType()))

@@ -37,9 +37,14 @@ def process_bronze_table(source_name, csv_path, snapshot_date_str, bronze_dir, s
     # Load raw CSV and filter to this snapshot date
     df = spark.read.csv(csv_path, header=True, inferSchema=True) \
                    .filter(col("snapshot_date") == snapshot_date)
-    print(f"[bronze {source_name}] {snapshot_date_str} row count: {df.count()}")
+    n = df.count()
 
-    # Write to bronze partition
+    # Skip writing if no rows — production-style: only real data on disk
+    if n == 0:
+        print(f"[bronze {source_name}] {snapshot_date_str} no rows — skipping write")
+        return df
+
+    print(f"[bronze {source_name}] {snapshot_date_str} row count: {n}")
     partition_name = f"bronze_{source_name}_" + snapshot_date_str.replace("-", "_") + ".csv"
     filepath = os.path.join(bronze_dir, partition_name)
     df.toPandas().to_csv(filepath, index=False)

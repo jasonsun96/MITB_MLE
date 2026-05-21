@@ -35,10 +35,13 @@ SOURCES = {
 }
 
 # Snapshot date range.
-# Extended past Lab 2's 2024-12-01 so labels exist for the latest loans
-# (Jan 2025 loan's mob=6 falls in Jul 2025).
+# END_DATE is set to the latest snapshot we treat as "today" — December 2024,
+# which is the freshest cross-source date (clickstream ends here).
+# Loans whose mob=6 falls AFTER today are right-censored: still in flight, not
+# yet labelable. As new snapshots arrive, the same code labels them naturally —
+# the pipeline is data-bounded, not date-bounded.
 START_DATE = "2023-01-01"
-END_DATE   = "2025-07-01"
+END_DATE   = "2024-12-01"
 
 # Label definition (from Lab 2): default = 30+ days past due at 6 months on book
 LABEL_DPD = 30
@@ -91,11 +94,14 @@ def main():
     datamart = "datamart"
     bronze_dirs = {s: os.path.join(datamart, "bronze", s) for s in SOURCES}
     silver_dirs = {s: os.path.join(datamart, "silver", s) for s in SOURCES}
-    gold_label_dir   = os.path.join(datamart, "gold", "label_store")
-    gold_feature_dir = os.path.join(datamart, "gold", "feature_store")
-    silver_root      = os.path.join(datamart, "silver")
+    gold_label_dir       = os.path.join(datamart, "gold", "label_store")
+    gold_feature_dir     = os.path.join(datamart, "gold", "feature_store")
+    gold_ml_training_dir = os.path.join(datamart, "gold", "ml_training_set")
+    silver_root          = os.path.join(datamart, "silver")
 
-    for d in list(bronze_dirs.values()) + list(silver_dirs.values()) + [gold_label_dir, gold_feature_dir]:
+    for d in list(bronze_dirs.values()) + list(silver_dirs.values()) + [
+        gold_label_dir, gold_feature_dir, gold_ml_training_dir
+    ]:
         os.makedirs(d, exist_ok=True)
 
     # --- BRONZE: ingest each source per snapshot date ---
@@ -133,6 +139,14 @@ def main():
             date_str, silver_root, gold_feature_dir, spark
         )
 
+    # --- GOLD ml_training_set: final inner-join of features + labels ---
+    # This is the actual ML-ready artefact. Customers without a matured label
+    # are excluded automatically — they are the production scoring set.
+    banner("GOLD — ML training set (inner join of feature_store + label_store)")
+    utils.data_processing_gold_table.process_ml_training_set(
+        gold_label_dir, gold_feature_dir, gold_ml_training_dir, spark
+    )
+
     # --- Final sanity check ---
     banner("DONE — sanity check")
 
@@ -150,10 +164,18 @@ def main():
         print(f"Feature store  : {features.count():,} rows across {len(feature_files)} partitions")
 
     if label_files and feature_files:
+        # Join on loan_id so the pipeline stays correct if a customer has multiple loans
         joined = features.join(
-            labels.select("Customer_ID", "label"), "Customer_ID", "inner"
+            labels.select("loan_id", "label"), "loan_id", "inner"
         )
-        print(f"Joinable rows  : {joined.count():,} customers with both features and labels")
+        print(f"Joinable rows  : {joined.count():,} loans with both features and a matured label")
+
+    # Verify the ml_training_set output
+    training_files = sorted(glob.glob(os.path.join(gold_ml_training_dir, "*")))
+    if training_files:
+        training = spark.read.parquet(*training_files)
+        print(f"ML training set: {training.count():,} rows (inner-joined features + labels) "
+              f"with {len(training.columns)} columns")
 
 
 if __name__ == "__main__":
