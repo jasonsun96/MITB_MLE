@@ -1,29 +1,3 @@
-"""
-Training stage of the A2 ML pipeline.
-
-Reads the gold ml_training_set produced by the datamart pipeline, does a
-chronological train / val / test / oot split, trains four loan-default model
-candidates (logreg / decision tree / random forest / xgboost), picks the best
-by validation ROC-AUC, and writes all four artefacts plus a manifest to the
-model_bank.
-
-Design choices baked in here:
-  - Chronological 4-way split by feature snapshot_date (NO random split - that
-    would leak future information into past training rows: temporal leakage).
-      train      -> fit the models
-      validation -> model selection (choose best by AUC)
-      test       -> held-out, in-period sanity check (never seen in fit/select)
-      oot        -> out-of-time, the strictest generalisation check
-  - Preprocessing is fit on TRAIN ONLY and lives inside each model's sklearn
-    Pipeline, so val / test / oot / production rows are only *transformed*
-    (avoids train-test contamination).
-  - Mixed feature types handled with a ColumnTransformer:
-        numeric      -> median impute (+ StandardScaler for logreg only)
-        categorical  -> most-frequent impute + one-hot (handle_unknown=ignore)
-  - Class imbalance handled via class_weight='balanced' (sklearn) and
-    scale_pos_weight (xgboost).
-  - All four models saved into the bank; the manifest records which is "best".
-"""
 import json
 import os
 from datetime import datetime
@@ -42,23 +16,14 @@ from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
 
-# Columns that are identifiers / metadata / target, never features.
 NON_FEATURE_COLS = {
     "loan_id", "Customer_ID", "snapshot_date", "loan_start_date",
     "label", "label_def",
     "feature_snapshot_date", "label_snapshot_date",
 }
 
-# Chronological 4-way split, 70 / 10 / 10 / 10 by row percentile of
-# snapshot_date (matured data is monthly, so exact percentages can only be hit
-# at the row level). Rows are sorted by snapshot_date, then sliced:
-#   train = earliest 70%   val = next 10%   test = next 10%   oot = latest 10%
-# This keeps the ordering strictly chronological (earliest loans train the model,
-# the most recent are the out-of-time holdout) with no random shuffling.
-SPLIT_FRACS = (0.70, 0.80, 0.90)   # cumulative cut points for train/val/test
+SPLIT_FRACS = (0.70, 0.80, 0.90)
 
-# Approximate period boundaries (used only for the PSI baseline window and the
-# monitoring chart shading - NOT for the split itself, which is by row above).
 TRAIN_CUTOFF = "2024-01-01"
 VAL_CUTOFF   = "2024-03-01"
 TEST_CUTOFF  = "2024-05-01"
@@ -74,7 +39,6 @@ def _load_ml_training_set(gold_ml_training_dir: str) -> pd.DataFrame:
 
 
 def _chrono_split(df: pd.DataFrame):
-    """Chronological 70/10/10/10 train/val/test/oot split by snapshot_date order."""
     df = df.copy()
     df["snapshot_date"] = pd.to_datetime(df["snapshot_date"])
     df = df.sort_values("snapshot_date", kind="mergesort").reset_index(drop=True)
@@ -164,7 +128,6 @@ def _evaluate(model, X, y) -> dict:
 
 
 def train_models(gold_ml_training_dir: str, model_bank_dir: str) -> dict:
-    """End-to-end training entrypoint. Returns the manifest dict that was written."""
     df = _load_ml_training_set(gold_ml_training_dir)
 
     train_df, val_df, test_df, oot_df = _chrono_split(df)
@@ -197,7 +160,6 @@ def train_models(gold_ml_training_dir: str, model_bank_dir: str) -> dict:
               + (f"  test auc={test_metrics[name]['auc']:.4f}" if name in test_metrics else "")
               + (f"  oot auc={oot_metrics[name]['auc']:.4f}" if name in oot_metrics else ""))
 
-    # model selection on validation only
     best_name = max(val_metrics, key=lambda n: val_metrics[n]["auc"])
     print(f"[training] best model by val auc: {best_name} ({val_metrics[best_name]['auc']:.4f})")
 

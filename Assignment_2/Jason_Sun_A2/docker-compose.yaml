@@ -1,26 +1,13 @@
-# Apache Airflow 3.2.1 (LocalExecutor) stack for the CS611 Assignment 2 ML pipeline.
-#
-#   docker-compose build
-#   docker-compose up
-#
-# Then open Airflow at http://localhost:8080  (user: airflow / pw: airflow),
-# unpause the "loan_default_ml_pipeline" DAG and it will backfill the range.
-
 x-airflow-common: &airflow-common
   build: .
   image: a2_loan_pipeline:latest
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    # Use the FAB auth manager so the airflow/airflow user created at init
-    # is the login (Airflow 3 otherwise defaults to SimpleAuthManager).
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__API__SECRET_KEY: "local-airflow-secret"
-    # Shared JWT secret so the Task SDK workers and the api-server agree on
-    # token signatures (Airflow 3 LocalExecutor requires this explicitly,
-    # otherwise tasks fail with "Invalid auth token: Signature verification failed").
     AIRFLOW__API_AUTH__JWT_SECRET: "local-airflow-jwt-secret"
     AIRFLOW__API__BASE_URL: "http://localhost:8080"
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-api-server:8080/execution/"
@@ -54,12 +41,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Runs once as ROOT to create + hand the bind-mounted output dirs to the
-  # airflow user (avoids "permission denied" on /opt/airflow output folders),
-  # then migrates the DB and creates the admin user.
-  # Initialise the metadata DB and create the admin user (runs as the normal
-  # airflow user, matching the standard Airflow compose). Must finish before
-  # the other services start.
   airflow-init:
     <<: *airflow-common
     entrypoint: /bin/bash

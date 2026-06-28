@@ -1,23 +1,3 @@
-"""
-Monitoring stage of the A2 ML pipeline.
-
-For one snapshot_date it reads that snapshot's predictions, joins the matured
-labels (when available) and writes a single-row monitoring partition capturing:
-
-  performance (needs matured labels):
-    - n_scored, n_labelled, actual default rate, predicted-positive rate
-    - ROC-AUC (headline), plus KS / average precision / precision-recall-f1
-  stability (always computable):
-    - PSI of the predicted-probability distribution vs a fixed training-period
-      baseline  (drift in the model's OUTPUT scores)
-    - CSI: per-feature PSI of the input features vs the same baseline, summarised
-      as max / mean across features + the single most-drifted feature
-      (drift in the model's INPUTS)
-
-Rule of thumb for PSI/CSI: < 0.1 stable, 0.1-0.25 moderate, > 0.25 large shift.
-Each monthly run appends one row, so the gold/monitoring table is a time series
-that drives the slideument visualisations.
-"""
 import glob
 import json
 import os
@@ -47,7 +27,6 @@ def _ks_statistic(y_true: np.ndarray, proba: np.ndarray) -> float:
 
 
 def _psi(expected: np.ndarray, actual: np.ndarray, bins: int = PSI_BINS) -> float:
-    """Population Stability Index of `actual` vs `expected` over quantile bins."""
     if len(expected) == 0 or len(actual) == 0:
         return float("nan")
     edges = np.quantile(expected, np.linspace(0, 1, bins + 1))
@@ -71,7 +50,6 @@ def _baseline_scores(gold_predictions_dir: str) -> np.ndarray:
 
 
 def _baseline_features(gold_feature_dir: str, numeric_cols: list) -> pd.DataFrame:
-    """Pool the numeric feature values from the training-window snapshots."""
     cut = pd.to_datetime(TRAIN_CUTOFF); frames = []
     for f in sorted(glob.glob(os.path.join(gold_feature_dir, "gold_feature_store_*.parquet"))):
         df = pd.read_parquet(f)
@@ -82,7 +60,6 @@ def _baseline_features(gold_feature_dir: str, numeric_cols: list) -> pd.DataFram
 
 
 def _feature_csi(baseline_df: pd.DataFrame, current_df: pd.DataFrame, numeric_cols: list):
-    """Per-feature PSI (= CSI) of current vs baseline; returns (max, mean, top_feature)."""
     csis = {}
     for c in numeric_cols:
         if c not in baseline_df.columns or c not in current_df.columns:
@@ -91,7 +68,7 @@ def _feature_csi(baseline_df: pd.DataFrame, current_df: pd.DataFrame, numeric_co
         if len(b) < 50 or len(a) < 10:
             continue
         v = _psi(b, a)
-        if v == v:  # not NaN
+        if v == v:
             csis[c] = v
     if not csis:
         return float("nan"), float("nan"), float("nan"), None
@@ -111,7 +88,6 @@ def _load_labels(gold_label_dir: str) -> pd.DataFrame:
 def monitor(snapshot_date_str: str, gold_predictions_dir: str, gold_label_dir: str,
             gold_monitoring_dir: str, gold_feature_dir: str = None,
             model_bank_dir: str = None):
-    """Compute and persist the monitoring row for one snapshot_date."""
     date_suffix = snapshot_date_str.replace("-", "_")
     pred_path = os.path.join(gold_predictions_dir, f"gold_predictions_{date_suffix}.parquet")
     if not os.path.exists(pred_path):
@@ -134,7 +110,6 @@ def monitor(snapshot_date_str: str, gold_predictions_dir: str, gold_label_dir: s
         "mean_predicted_proba": float(preds["predicted_proba"].mean()),
     }
 
-    # --- performance (where labels matured) ---
     if n_labelled > 0:
         y = merged.loc[has_label, "label"].astype(int).to_numpy()
         p = merged.loc[has_label, "predicted_proba"].to_numpy()
@@ -154,11 +129,9 @@ def monitor(snapshot_date_str: str, gold_predictions_dir: str, gold_label_dir: s
                   "precision", "recall", "f1"]:
             row[k] = float("nan")
 
-    # --- stability: PSI on output scores ---
     baseline = _baseline_scores(gold_predictions_dir)
     row["psi_score"] = _psi(baseline, preds["predicted_proba"].to_numpy())
 
-    # --- stability: CSI on input features ---
     csi_max = csi_mean = csi_med = float("nan"); csi_top = None
     if gold_feature_dir and model_bank_dir:
         man_path = os.path.join(model_bank_dir, "latest_manifest.json")

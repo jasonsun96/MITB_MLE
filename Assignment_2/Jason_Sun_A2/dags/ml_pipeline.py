@@ -1,44 +1,14 @@
-"""
-A2 end-to-end ML pipeline DAG (loan default prediction).
-
-Per monthly snapshot (driven by Airflow's logical date {{ ds }} + catchup backfill):
-
-  bronze_ingest -> silver_process -> gold_label_store
-                                  -> gold_feature_store
-                                  -> gold_ml_training_set
-                                  -> train_gate --(train month)--> train_model
-                                  |                \--(other)----> skip_train
-                                  -> inference -> monitor
-
-Model lifecycle (governance baked into the flow):
-  * The model is trained ONCE, at TRAIN_AS_OF (the last snapshot, when the
-    full matured dataset is available; labels mature at MOB 6), then back-tests.
-  * At that training run we also BACK-TEST the model across every historical
-    snapshot, populating predictions + monitoring for the whole timeline so the
-    performance/stability series can be visualised.
-  * From then on, each monthly run scores that month forward and appends a
-    fresh monitoring row.
-
-Backfill the whole thing with:
-  airflow dags backfill loan_default_ml_pipeline -s 2023-01-01 -e 2024-12-01
-or just unpause the DAG (catchup=True will replay the range).
-"""
 from datetime import datetime
 
 from airflow import DAG
-# Airflow 3.x moved the core operators into the "standard" provider; fall back
-# to the 2.x import path so the DAG works on either version.
 try:
     from airflow.providers.standard.operators.python import (
         PythonOperator, BranchPythonOperator)
     from airflow.providers.standard.operators.empty import EmptyOperator
-except ImportError:  # Airflow 2.x
+except ImportError:
     from airflow.operators.python import PythonOperator, BranchPythonOperator
     from airflow.operators.empty import EmptyOperator
 
-# ---------------------------------------------------------------------------
-# paths (inside the Airflow container; mounted from the repo by docker-compose)
-# ---------------------------------------------------------------------------
 BASE        = "/opt/airflow"
 DATA_DIR    = f"{BASE}/data"
 DM          = f"{BASE}/datamart"
@@ -51,11 +21,9 @@ GOLD_PRED   = f"{DM}/gold/predictions"
 GOLD_MON    = f"{DM}/gold/monitoring"
 MODEL_BANK  = f"{BASE}/model_bank"
 
-# label definition (Lab 2): default = 30+ DPD at month-on-book 6
 DPD, MOB = 30, 6
 
-# the snapshot at which we train (train<=2023-09 + val<=2023-12 labels matured)
-TRAIN_AS_OF = "2024-12-01"   # last snapshot: trains on the full matured dataset
+TRAIN_AS_OF = "2024-12-01"
 
 SOURCES = [
     ("loan_daily",  f"{DATA_DIR}/lms_loan_daily.csv"),
@@ -83,9 +51,6 @@ def _ensure_dirs():
         os.makedirs(d, exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# task callables
-# ---------------------------------------------------------------------------
 def run_bronze(ds, **_):
     import sys; sys.path.insert(0, BASE)
     from utils.data_processing_bronze_table import process_bronze_table
@@ -149,12 +114,10 @@ def run_gold_training_set(ds, **_):
 
 
 def train_gate(ds, **_):
-    """Branch: train only on the designated training snapshot."""
     return "train_model" if ds == TRAIN_AS_OF else "skip_train"
 
 
 def run_train(ds, **_):
-    """Train the model bank, then back-test across every historical snapshot."""
     import sys, os, glob; sys.path.insert(0, BASE)
     from utils.training import train_models
     from utils.inference import infer
@@ -163,8 +126,6 @@ def run_train(ds, **_):
 
     train_models(GOLD_MLTS, MODEL_BANK)
 
-    # back-test the freshly trained model over the full timeline so the
-    # monitoring series exists end-to-end the moment training completes.
     parts = sorted(glob.glob(os.path.join(GOLD_FEAT, "gold_feature_store_*.parquet")))
     for p in parts:
         snap = os.path.basename(p).replace("gold_feature_store_", "").replace(".parquet", "").replace("_", "-")
@@ -202,9 +163,6 @@ def run_visualize(ds, **_):
     make_monitoring_charts(GOLD_MON)
 
 
-# ---------------------------------------------------------------------------
-# DAG
-# ---------------------------------------------------------------------------
 with DAG(
     dag_id="loan_default_ml_pipeline",
     description="A2: end-to-end loan default ML pipeline (datamart + train + infer + monitor)",

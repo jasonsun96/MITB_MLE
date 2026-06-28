@@ -1,15 +1,3 @@
-"""
-Visualisation stage of the A2 ML pipeline.
-
-Reads the gold monitoring table (the time series written by monitoring.py) and
-renders the performance & stability charts that go into the slideument:
-  - discrimination over time (ROC-AUC + KS), with train / val / OOT shading
-  - Population Stability Index (PSI) over time, with the 0.1 / 0.25 thresholds
-  - scoring volume with predicted vs actual default rate
-
-Charts are written as PNGs to <gold_monitoring_dir>/plots so a backfill leaves
-an up-to-date visual snapshot of model health on disk.
-"""
 import glob
 import os
 
@@ -54,7 +42,6 @@ def make_monitoring_charts(gold_monitoring_dir: str, out_dir: str = None):
         "axes.spines.right":False,"figure.dpi":140})
     te, ve = pd.to_datetime(TRAIN_CUTOFF), pd.to_datetime(VAL_CUTOFF)
 
-    # discrimination
     fig, ax = plt.subplots(figsize=(9,4.2))
     ax.axvspan(m.snapshot_date.min(), te, color=BLUE, alpha=0.06)
     ax.axvspan(te, ve, color=AMBER, alpha=0.08)
@@ -66,7 +53,6 @@ def make_monitoring_charts(gold_monitoring_dir: str, out_dir: str = None):
     ax.legend(frameon=False, ncol=2, loc="lower left"); _xfmt(ax)
     fig.tight_layout(); fig.savefig(os.path.join(out_dir,"discrimination_over_time.png")); plt.close(fig)
 
-    # PSI
     fig, ax = plt.subplots(figsize=(9,4.2))
     ax.axhspan(0,0.1,color=TEAL,alpha=0.10); ax.axhspan(0.1,0.25,color=AMBER,alpha=0.12)
     ax.axhspan(0.25,max(1.4,m.psi_score.max()*1.1),color=RED,alpha=0.08)
@@ -80,7 +66,6 @@ def make_monitoring_charts(gold_monitoring_dir: str, out_dir: str = None):
     ax.set_title("Score (PSI) & feature (CSI) stability over time", fontweight="bold", color=NAVY, loc="left"); _xfmt(ax)
     fig.tight_layout(); fig.savefig(os.path.join(out_dir,"psi_stability_over_time.png")); plt.close(fig)
 
-    # volume + rates
     fig, ax = plt.subplots(figsize=(9,4.2))
     ax.bar(m.snapshot_date, m.n_scored, width=20, color="#dce4ef", label="Loans scored")
     ax.set_ylabel("Loans scored", color=GREY); ax.set_ylim(0, m.n_scored.max()*1.7)
