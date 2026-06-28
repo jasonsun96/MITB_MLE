@@ -1,15 +1,3 @@
-"""
-Inference stage of the A2 ML pipeline.
-
-Loads the best model from the model_bank (via latest_manifest.json), scores the
-gold feature_store rows for a given snapshot_date, and writes per-loan
-predictions to a gold predictions table partitioned by snapshot_date.
-
-The model is the single source of truth for the feature schema: we read the
-raw feature columns the manifest recorded and let the model's own sklearn
-Pipeline do all imputation / scaling / encoding. Nothing about the input data
-is re-fit at inference time, so scoring is deterministic and leakage-free.
-"""
 import json
 import os
 from datetime import datetime
@@ -41,16 +29,6 @@ def _load_best_model(manifest: dict, model_bank_dir: str):
 
 def infer(snapshot_date_str: str, gold_feature_dir: str, model_bank_dir: str,
           gold_predictions_dir: str, threshold: float = DEFAULT_THRESHOLD):
-    """
-    Score one snapshot's feature store with the current best model.
-
-    Args:
-        snapshot_date_str     "YYYY-MM-DD"
-        gold_feature_dir      datamart/gold/feature_store
-        model_bank_dir        model_bank
-        gold_predictions_dir  datamart/gold/predictions  (written here)
-        threshold             prob cut for the hard 0/1 prediction
-    """
     date_suffix = snapshot_date_str.replace("-", "_")
     feat_path = os.path.join(gold_feature_dir, f"gold_feature_store_{date_suffix}.parquet")
     if not os.path.exists(feat_path):
@@ -66,9 +44,6 @@ def infer(snapshot_date_str: str, gold_feature_dir: str, model_bank_dir: str,
         print(f"[inference] empty feature_store for {snapshot_date_str} - skipping")
         return None
 
-    # Reindex to the exact training feature schema. Any column the model expects
-    # but that is absent in this partition becomes NaN and is imputed by the
-    # model's own pipeline; any extra columns are dropped.
     X = features.reindex(columns=feature_cols)
 
     proba = model.predict_proba(X)[:, 1]
