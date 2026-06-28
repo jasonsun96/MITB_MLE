@@ -1,0 +1,24 @@
+# local generated outputs (rebuilt by the pipeline)
+datamart/*
+!datamart/.gitkeep
+model_bank/*
+!model_bank/.gitkeep
+logs/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# editor
+.vscode/
+.idea/
+.DS_Store
+
+sample_assignments/
+**/datamart/
+**/model_bank/
+**/logs/
+**/__pycache__/
+*.zip
