@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+sample_assignments/
+**/datamart/
+**/model_bank/
+**/logs/
+**/__pycache__/
+*.zip
